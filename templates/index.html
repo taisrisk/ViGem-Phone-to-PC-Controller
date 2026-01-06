@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Mem Controller</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/vendor/socket.io.min.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <div class="title">Mem Controller</div>
+        <div id="status" class="status">Connecting...</div>
+      </header>
+
+      <main>
+        <section id="touchpad" class="touchpad" aria-label="Touchpad">
+          <canvas id="viz" class="viz" aria-hidden="true"></canvas>
+          <div class="hint">Touchpad</div>
+        </section>
+
+        <section class="controls" aria-label="Controls">
+          <div class="row">
+            <button class="btn" data-click="left">Left</button>
+            <button class="btn" data-click="right">Right</button>
+            <button class="btn" id="btn-keyboard">Type</button>
+          </div>
+
+          <details class="panel">
+            <summary>Gamepad</summary>
+            <div class="row">
+              <button class="btn" data-pad="a">A</button>
+              <button class="btn" data-pad="b">B</button>
+              <button class="btn" data-pad="x">X</button>
+              <button class="btn" data-pad="y">Y</button>
+            </div>
+            <div class="row">
+              <button class="btn" data-pad="lb">LB</button>
+              <button class="btn" data-pad="rb">RB</button>
+              <button class="btn" data-pad="back">Back</button>
+              <button class="btn" data-pad="start">Start</button>
+            </div>
+            <div class="row">
+              <button class="btn" data-pad="dup">&uarr;</button>
+              <button class="btn" data-pad="dleft">&larr;</button>
+              <button class="btn" data-pad="dright">&rarr;</button>
+              <button class="btn" data-pad="ddown">&darr;</button>
+            </div>
+            <div class="row">
+              <div class="stick">
+                <div class="stick-label">Left stick</div>
+                <div class="stick-area" data-stick="left"></div>
+              </div>
+              <div class="stick">
+                <div class="stick-label">Right stick</div>
+                <div class="stick-area" data-stick="right"></div>
+              </div>
+            </div>
+            <div class="row">
+              <label class="slider">
+                <span>LT</span>
+                <input type="range" min="0" max="100" value="0" data-trigger="lt" />
+              </label>
+              <label class="slider">
+                <span>RT</span>
+                <input type="range" min="0" max="100" value="0" data-trigger="rt" />
+              </label>
+            </div>
+          </details>
+        </section>
+      </main>
+
+      <input id="hidden-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    </div>
+
+    <script>
+      window.MEMCTRL_TOKEN = "{{ token|e }}";
+    </script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
