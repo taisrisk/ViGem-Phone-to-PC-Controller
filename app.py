@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -39,6 +40,12 @@ def load_settings() -> Settings:
 
 settings = load_settings()
 
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+def _log(msg: str) -> None:
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}")
+
 
 class RelayClient:
     def __init__(self, host: str, port: int) -> None:
@@ -47,9 +54,15 @@ class RelayClient:
         self._sock: Optional[socket.socket] = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._rx_buf = b""
+
+        self._pending_lock = threading.Lock()
+        self._pending: dict[str, tuple[threading.Event, dict[str, Any]]] = {}
+        self._next_id = 1
 
         self.connected = False
         self.capabilities = {"mouse": False, "keyboard": False, "gamepad": False}
+        self.last_status: dict[str, Any] = {}
 
         self._thread = threading.Thread(target=self._run, name="relay-client", daemon=True)
         self._thread.start()
@@ -84,14 +97,13 @@ class RelayClient:
         if not s:
             return None
         s.settimeout(timeout_s)
-        buf = b""
         try:
-            while b"\n" not in buf:
+            while b"\n" not in self._rx_buf:
                 chunk = s.recv(4096)
                 if not chunk:
                     return None
-                buf += chunk
-            line, _rest = buf.split(b"\n", 1)
+                self._rx_buf += chunk
+            line, self._rx_buf = self._rx_buf.split(b"\n", 1)
             return json.loads(line.decode("utf-8"))
         except Exception:
             return None
@@ -101,34 +113,58 @@ class RelayClient:
             except Exception:
                 pass
 
+    def _handle_incoming(self, msg: dict[str, Any]) -> None:
+        t = msg.get("t")
+        if t == "status":
+            self.last_status = msg
+            self.capabilities = {
+                "mouse": bool(msg.get("mouse")),
+                "keyboard": bool(msg.get("keyboard")),
+                "gamepad": bool(msg.get("gamepad")),
+            }
+            return
+        if t == "rpc_result":
+            req_id = str(msg.get("id") or "")
+            with self._pending_lock:
+                pending = self._pending.get(req_id)
+                if not pending:
+                    return
+                ev, box = pending
+                box.update(msg)
+                ev.set()
+            return
+
     def _connect_once(self) -> None:
         s = socket.create_connection((self._host, self._port), timeout=1.5)
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         with self._lock:
             self._sock = s
             self.connected = True
+            self._rx_buf = b""
 
         # Handshake.
         self._send_line({"t": "hello", "v": 1})
         msg = self._read_line(timeout_s=1.5)
-        if msg and msg.get("t") == "status":
-            self.capabilities = {
-                "mouse": bool(msg.get("mouse")),
-                "keyboard": bool(msg.get("keyboard")),
-                "gamepad": bool(msg.get("gamepad")),
-            }
+        if msg and isinstance(msg, dict):
+            self._handle_incoming(msg)
+        _log(f"Connected to host relay {self._host}:{self._port}")
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            if self.connected:
-                time.sleep(0.25)
-                continue
-
             try:
                 self._connect_once()
             except Exception:
                 self._close()
                 time.sleep(0.5)
+                continue
+
+            while self.connected and not self._stop.is_set():
+                msg = self._read_line(timeout_s=0.5)
+                if not msg:
+                    continue
+                if isinstance(msg, dict):
+                    self._handle_incoming(msg)
+            _log("Host relay disconnected; reconnecting...")
 
     def stop(self) -> None:
         self._stop.set()
@@ -139,6 +175,37 @@ class RelayClient:
 
     def send_input(self, event: str, data: dict[str, Any]) -> None:
         self._send_line({"t": "input", "e": event, "d": data})
+
+    def rpc(self, method: str, params: dict[str, Any], timeout_s: float = 2.0) -> dict[str, Any]:
+        if not self.connected:
+            return {"ok": False, "error": "host_not_connected"}
+
+        with self._pending_lock:
+            req_id = str(self._next_id)
+            self._next_id += 1
+            ev = threading.Event()
+            box: dict[str, Any] = {}
+            self._pending[req_id] = (ev, box)
+
+        sent = self._send_line({"t": "rpc", "id": req_id, "m": method, "p": params})
+        if not sent:
+            with self._pending_lock:
+                self._pending.pop(req_id, None)
+            return {"ok": False, "error": "send_failed"}
+
+        if not ev.wait(timeout_s):
+            with self._pending_lock:
+                self._pending.pop(req_id, None)
+            return {"ok": False, "error": "timeout"}
+
+        with self._pending_lock:
+            _ev, result = self._pending.pop(req_id, (ev, box))
+
+        return {
+            "ok": bool(result.get("ok", False)),
+            "error": result.get("error"),
+            "result": result.get("result"),
+        }
 
 
 def maybe_autostart_host() -> None:
@@ -206,6 +273,7 @@ def diag() -> dict[str, Any]:
         "relay_host": settings.relay_host,
         "relay_port": settings.relay_port,
         "relay_connected": relay.connected,
+        "relay_last_status": relay.last_status,
         "token_enabled": bool(settings.token),
         "note": "Start with `python app.py` (not `flask run`). Ensure Windows Firewall allows TCP on the web port.",
     }
@@ -219,6 +287,7 @@ def on_connect(auth: Optional[dict[str, Any]] = None) -> Any:
     if settings.token and presented != settings.token:
         return False
 
+    _log(f"Phone connected ip={request.remote_addr}")
     relay.send_client_state(
         "connected",
         {
@@ -226,6 +295,11 @@ def on_connect(auth: Optional[dict[str, Any]] = None) -> Any:
             "ua": request.headers.get("User-Agent", ""),
         },
     )
+    transport = "?"
+    try:
+        transport = str(request.args.get("transport") or "?")
+    except Exception:
+        pass
     emit(
         "server_status",
         {
@@ -233,12 +307,17 @@ def on_connect(auth: Optional[dict[str, Any]] = None) -> Any:
             "mouse": relay.capabilities.get("mouse", False),
             "keyboard": relay.capabilities.get("keyboard", False),
             "gamepad": relay.capabilities.get("gamepad", False),
+            "transport": transport,
+            "gamepad_error": relay.last_status.get("gamepad_error"),
+            "selected_window": relay.last_status.get("selected_window"),
+            "focus_lock": relay.last_status.get("focus_lock"),
         },
     )
 
 
 @socketio.on("disconnect")
 def on_disconnect() -> None:
+    _log(f"Phone disconnected ip={request.remote_addr}")
     relay.send_client_state("disconnected", {"ip": request.remote_addr})
 
 
@@ -291,6 +370,33 @@ def on_pad_trigger(data: dict[str, Any]) -> None:
 @socketio.on("pad_button")
 def on_pad_button(data: dict[str, Any]) -> None:
     relay.send_input("pad_button", {"name": str(data.get("name") or ""), "down": bool(data.get("down", True))})
+
+
+@socketio.on("select_window")
+def on_select_window(_data: dict[str, Any]) -> dict[str, Any]:
+    return relay.rpc("select_foreground_window", {}, timeout_s=2.0)
+
+
+@socketio.on("get_selected_window")
+def on_get_selected_window(_data: dict[str, Any]) -> dict[str, Any]:
+    return relay.rpc("get_selected_window", {}, timeout_s=2.0)
+
+
+@socketio.on("set_focus_lock")
+def on_set_focus_lock(data: dict[str, Any]) -> dict[str, Any]:
+    enabled = bool(data.get("enabled", False))
+    return relay.rpc("set_focus_lock", {"enabled": enabled}, timeout_s=2.0)
+
+
+@socketio.on("pad_reset")
+def on_pad_reset(_data: dict[str, Any]) -> dict[str, Any]:
+    return relay.rpc("pad_reset", {}, timeout_s=4.0)
+
+
+@socketio.on("set_gamepad_enabled")
+def on_set_gamepad_enabled(data: dict[str, Any]) -> dict[str, Any]:
+    enabled = bool(data.get("enabled", False))
+    return relay.rpc("set_gamepad_enabled", {"enabled": enabled}, timeout_s=4.0)
 
 
 if __name__ == "__main__":

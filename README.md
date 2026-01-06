@@ -1,6 +1,8 @@
 # Mem Controller (phone → PC touchpad/gamepad)
 
-Run a small Flask web app on your Windows PC, open it in your phone’s browser, and use it as:
+This project exists because I’m lazy and I want to control my PC from bed without getting up.
+
+It runs a small Flask web app on your Windows PC, opens in your phone’s browser, and works as:
 
 - a touchpad + mouse buttons
 - a typing bridge (phone keyboard → PC)
@@ -36,6 +38,18 @@ python app.py
 
 If the phone gets stuck on “Connecting…”, open `http://<PC-IP>:5000/diag` to confirm the server is reachable and check Windows Firewall.
 
+## UI modes
+
+- Portrait: touchpad + mouse buttons + typing.
+- Landscape: gamepad layout (touchpad hidden).
+
+## Gaming: select the game window (focus lock)
+
+In landscape mode:
+
+- Tap `Select` while your game is the active/focused window on the PC.
+- Optionally enable `Lock focus` to keep trying to bring that window to the front while you play (best-effort; Windows may block focus stealing in some cases).
+
 ## Optional: require a token
 
 ```powershell
@@ -66,12 +80,15 @@ python app.py
 ```
 
 If the UI shows `no-pad`, either `vgamepad` isn’t installed or ViGEmBus isn’t working.
+You can also verify the virtual controller exists with `joy.cpl` on Windows.
+Some games only detect controllers that existed before the game launched, so start `host.py` (with gamepad enabled) before opening the game; you can also use the `Reset pad` button in landscape mode.
 
 ## Tuning
 
 Environment variables:
 
 - `MEMCTRL_MOUSE_SENS` (default `1.0`)
+- `MEMCTRL_MOUSE_HZ` (default `500`) higher can feel smoother (device/network limits still apply)
 - `MEMCTRL_JOYSTICK_SENS` (default `1.0`)
 - `MEMCTRL_MAX_MOVE_PX` (default `200`)
 - `MEMCTRL_MAX_SCROLL` (default `120`)
@@ -80,3 +97,5 @@ Environment variables:
 - `MEMCTRL_RELAY_HOST` (default `127.0.0.1`) for `app.py` → `host.py`
 - `MEMCTRL_RELAY_PORT` (default `8765`) for `app.py` → `host.py`
 - `MEMCTRL_AUTOSTART_HOST` (default `0`) set to `1` to auto-launch `host.py` from `app.py`
+- `MEMCTRL_LOG_INPUT` (default `0`) prints 1s input stats in `host.py`
+- `MEMCTRL_LOG_INPUT_VERBOSE` (default `0`) prints every input event (very spammy at high Hz)
