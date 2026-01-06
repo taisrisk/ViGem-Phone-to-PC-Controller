@@ -241,6 +241,7 @@ def require_token_or_403(presented: Optional[str]) -> None:
 @app.get("/")
 def index() -> str:
     require_token_or_403(request.args.get("token"))
+    _log(f"HTTP / ip={request.remote_addr}")
     return render_template("index.html", token=settings.token or "")
 
 

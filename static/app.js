@@ -16,11 +16,21 @@ if (typeof io === "undefined") {
   throw new Error("Socket.IO client missing");
 }
 
-const socket = io({
-  auth: { token: window.MEMCTRL_TOKEN || "" },
-  transports: ["websocket", "polling"],
-  timeout: 8000,
-});
+let socket;
+try {
+  socket = io({
+    auth: { token: window.MEMCTRL_TOKEN || "" },
+    // Use polling first for maximum compatibility; it will upgrade to websocket when possible.
+    transports: ["polling", "websocket"],
+    timeout: 8000,
+    reconnection: true,
+    reconnectionDelay: 300,
+    reconnectionDelayMax: 1500,
+  });
+} catch (e) {
+  statusEl.textContent = `Error: Socket.IO init failed (${String(e)})`;
+  throw e;
+}
 
 socket.on("connect", () => {
   const t = socket.io && socket.io.engine && socket.io.engine.transport ? socket.io.engine.transport.name : "?";
@@ -74,6 +84,33 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+// Automatic mode switching:
+// - Portrait: touchpad mode
+// - Landscape: gamepad mode
+const portraitPane = document.getElementById("portrait-pane");
+const landscapePane = document.getElementById("landscape-pane");
+function updateMode() {
+  const isLandscape = window.matchMedia && window.matchMedia("(orientation: landscape)").matches;
+  const wantGamepad = !!(gamepadToggle && gamepadToggle.checked);
+  if (portraitPane && landscapePane) {
+    // Automatic switching:
+    // - Desktop mode: touchpad
+    // - Gaming mode: gamepad (enabled by selecting a window or toggling Gamepad)
+    portraitPane.style.display = wantGamepad ? "none" : "";
+    landscapePane.style.display = wantGamepad ? "grid" : "none";
+
+    // Hint when gamepad is on but the device is portrait.
+    if (wantGamepad && !isLandscape && selectedWindowEl) {
+      if (!selectedWindowEl.textContent || selectedWindowEl.textContent === "No window selected") {
+        selectedWindowEl.textContent = "Rotate to landscape for gamepad layout";
+      }
+    }
+  }
+}
+window.addEventListener("resize", updateMode);
+window.addEventListener("orientationchange", updateMode);
+updateMode();
+
 function applyHostState(s) {
   const sel = s.selected_window || (s.result && s.result.selected_window) || null;
   const lock = typeof s.focus_lock === "boolean" ? s.focus_lock : (s.result && s.result.focus_lock);
@@ -85,6 +122,7 @@ function applyHostState(s) {
     else if (sel && sel.hwnd) selectedWindowEl.textContent = `HWND ${sel.hwnd}`;
     else selectedWindowEl.textContent = "No window selected";
   }
+  updateMode();
 }
 
 function rpc(event, data, cb) {
