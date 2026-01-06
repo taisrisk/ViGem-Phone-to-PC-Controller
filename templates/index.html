@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Mem Controller</title>
+    <title>P2P Controller</title>
     <link rel="stylesheet" href="/static/style.css" />
     <script src="/static/vendor/socket.io.min.js"></script>
   </head>
   <body>
     <div id="app">
       <header>
-        <div class="title">Mem Controller</div>
+        <div class="title">P2P Controller</div>
         <div id="status" class="status">Connecting...</div>
       </header>
 
@@ -31,6 +31,7 @@
         </section>
 
         <section id="landscape-pane" class="pane landscape-pane" aria-label="Gamepad Mode">
+          <div id="layout-vigem">
           <div class="pad-top">
             <button class="btn pad-btn" data-triggerbtn="lt">LT</button>
             <button class="btn pad-btn" data-pad="lb">LB</button>
@@ -57,6 +58,10 @@
                 <span>Gamepad</span>
               </label>
               <label class="toggle">
+                <input type="checkbox" id="toggle-kbm" />
+                <span>KBM mode</span>
+              </label>
+              <label class="toggle">
                 <input type="checkbox" id="toggle-lock-focus" />
                 <span>Lock focus</span>
               </label>
@@ -76,6 +81,60 @@
                 <button class="btn pad-btn abxy-a" data-pad="a">A</button>
               </div>
               <div class="stick-area stick-big" data-stick="right"></div>
+            </div>
+          </div>
+          </div>
+
+          <div id="layout-kbm" class="kbm-layout">
+            <div class="pad-top">
+              <button class="btn pad-btn" data-triggerbtn="lt">Aim</button>
+              <button class="btn pad-btn" data-triggerbtn="rt">Fire</button>
+              <div class="pad-title">KBM</div>
+              <button class="btn pad-btn small" id="btn-select-window-kbm">Select window</button>
+              <button class="btn pad-btn small" id="btn-pad-reset-kbm">Reset</button>
+            </div>
+
+            <div class="kbm-main">
+              <div class="kbm-left">
+                <div class="kbm-label">Move (WASD)</div>
+                <div class="kbm-pad" id="kbm-move-pad" data-kbm-stick="left">
+                  <div class="kbm-dpad">
+                    <button class="btn pad-btn dpad-up" data-kbm-key="w">W</button>
+                    <button class="btn pad-btn dpad-left" data-kbm-key="a">A</button>
+                    <button class="btn pad-btn dpad-right" data-kbm-key="d">D</button>
+                    <button class="btn pad-btn dpad-down" data-kbm-key="s">S</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="kbm-center">
+                <label class="toggle">
+                  <input type="checkbox" id="toggle-gamepad-kbm" />
+                  <span>Gaming mode</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="toggle-camera-drag" />
+                  <span>Camera (hold RMB)</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="toggle-lock-focus-kbm" />
+                  <span>Lock focus</span>
+                </label>
+                <div id="selected-window-kbm" class="selected-window">No window selected</div>
+                <div class="row">
+                  <button class="btn pad-btn" data-kbm-action="jump">Jump</button>
+                  <button class="btn pad-btn" data-kbm-action="use">Use</button>
+                </div>
+                <div class="row">
+                  <button class="btn pad-btn" data-kbm-action="reload">Reload</button>
+                  <button class="btn pad-btn" data-kbm-action="crouch">Crouch</button>
+                </div>
+              </div>
+
+              <div class="kbm-right">
+                <div class="kbm-label">Camera</div>
+                <div class="kbm-pad" id="kbm-cam-pad" data-kbm-stick="right"></div>
+              </div>
             </div>
           </div>
         </section>

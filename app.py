@@ -230,6 +230,8 @@ socketio = SocketIO(
     async_mode="threading",
     logger=settings.socketio_debug,
     engineio_logger=settings.socketio_debug,
+    ping_interval=10,
+    ping_timeout=30,
 )
 
 
@@ -398,6 +400,18 @@ def on_pad_reset(_data: dict[str, Any]) -> dict[str, Any]:
 def on_set_gamepad_enabled(data: dict[str, Any]) -> dict[str, Any]:
     enabled = bool(data.get("enabled", False))
     return relay.rpc("set_gamepad_enabled", {"enabled": enabled}, timeout_s=4.0)
+
+
+@socketio.on("set_input_mode")
+def on_set_input_mode(data: dict[str, Any]) -> dict[str, Any]:
+    mode = int(data.get("mode", 0))
+    return relay.rpc("set_input_mode", {"mode": mode}, timeout_s=4.0)
+
+
+@socketio.on("set_kbm_camera_drag")
+def on_set_kbm_camera_drag(data: dict[str, Any]) -> dict[str, Any]:
+    enabled = bool(data.get("enabled", False))
+    return relay.rpc("set_kbm_camera_drag", {"enabled": enabled}, timeout_s=2.0)
 
 
 if __name__ == "__main__":

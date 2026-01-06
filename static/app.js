@@ -7,9 +7,20 @@ const hiddenInput = document.getElementById("hidden-input");
 const keyboardBtn = document.getElementById("btn-keyboard");
 const selectWindowBtn = document.getElementById("btn-select-window");
 const gamepadToggle = document.getElementById("toggle-gamepad");
+const kbmToggle = document.getElementById("toggle-kbm");
 const lockFocusToggle = document.getElementById("toggle-lock-focus");
 const padResetBtn = document.getElementById("btn-pad-reset");
 const selectedWindowEl = document.getElementById("selected-window");
+const selectedWindowKbmEl = document.getElementById("selected-window-kbm");
+const selectWindowBtnKbm = document.getElementById("btn-select-window-kbm");
+const padResetBtnKbm = document.getElementById("btn-pad-reset-kbm");
+const gamepadToggleKbm = document.getElementById("toggle-gamepad-kbm");
+const lockFocusToggleKbm = document.getElementById("toggle-lock-focus-kbm");
+const cameraDragToggle = document.getElementById("toggle-camera-drag");
+const layoutVigem = document.getElementById("layout-vigem");
+const layoutKbm = document.getElementById("layout-kbm");
+const kbmMovePad = document.getElementById("kbm-move-pad");
+const kbmCamPad = document.getElementById("kbm-cam-pad");
 
 if (typeof io === "undefined") {
   statusEl.textContent = "Error: Socket.IO client missing (/static/vendor/socket.io.min.js)";
@@ -39,6 +50,8 @@ socket.on("connect", () => {
   socket.emit("get_selected_window", {}, (resp) => {
     if (resp && resp.ok && resp.result) applyHostState(resp.result);
   });
+  // Ask host for current mode/status (populates KBM + gamepad enabled flags).
+  socket.emit("get_selected_window", {}, () => {});
 });
 socket.on("disconnect", () => {
   statusEl.textContent = "Disconnected";
@@ -84,27 +97,64 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-// Automatic mode switching:
+function bindHoldButton(btn, onDown, onUp) {
+  if (!btn) return;
+  if (window.PointerEvent) {
+    const active = new Set();
+    const down = (e) => {
+      // Only left button for mouse.
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.preventDefault();
+      active.add(e.pointerId);
+      try {
+        btn.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      if (active.size === 1) onDown();
+    };
+    const up = (e) => {
+      if (!active.has(e.pointerId)) return;
+      e.preventDefault();
+      active.delete(e.pointerId);
+      if (active.size === 0) onUp();
+    };
+    btn.addEventListener("pointerdown", down);
+    btn.addEventListener("pointerup", up);
+    btn.addEventListener("pointercancel", up);
+    btn.addEventListener("lostpointercapture", up);
+    return;
+  }
+
+  // Fallback (older browsers): touch + mouse.
+  btn.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    onDown();
+  });
+  btn.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    onUp();
+  });
+  btn.addEventListener("touchcancel", (e) => {
+    e.preventDefault();
+    onUp();
+  });
+  btn.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    onDown();
+  });
+  btn.addEventListener("mouseup", onUp);
+  btn.addEventListener("mouseleave", onUp);
+}
+
+// Automatic UI switching:
 // - Portrait: touchpad mode
 // - Landscape: gamepad mode
 const portraitPane = document.getElementById("portrait-pane");
 const landscapePane = document.getElementById("landscape-pane");
 function updateMode() {
   const isLandscape = window.matchMedia && window.matchMedia("(orientation: landscape)").matches;
-  const wantGamepad = !!(gamepadToggle && gamepadToggle.checked);
   if (portraitPane && landscapePane) {
-    // Automatic switching:
-    // - Desktop mode: touchpad
-    // - Gaming mode: gamepad (enabled by selecting a window or toggling Gamepad)
-    portraitPane.style.display = wantGamepad ? "none" : "";
-    landscapePane.style.display = wantGamepad ? "grid" : "none";
-
-    // Hint when gamepad is on but the device is portrait.
-    if (wantGamepad && !isLandscape && selectedWindowEl) {
-      if (!selectedWindowEl.textContent || selectedWindowEl.textContent === "No window selected") {
-        selectedWindowEl.textContent = "Rotate to landscape for gamepad layout";
-      }
-    }
+    portraitPane.style.display = isLandscape ? "none" : "";
+    landscapePane.style.display = isLandscape ? "grid" : "none";
   }
 }
 window.addEventListener("resize", updateMode);
@@ -115,14 +165,29 @@ function applyHostState(s) {
   const sel = s.selected_window || (s.result && s.result.selected_window) || null;
   const lock = typeof s.focus_lock === "boolean" ? s.focus_lock : (s.result && s.result.focus_lock);
   const gp = typeof s.gamepad_enabled === "boolean" ? s.gamepad_enabled : (s.result && s.result.gamepad_enabled);
+  const mode = typeof s.input_mode === "number" ? s.input_mode : (s.result && s.result.input_mode);
   if (lockFocusToggle && typeof lock === "boolean") lockFocusToggle.checked = lock;
   if (gamepadToggle && typeof gp === "boolean") gamepadToggle.checked = gp;
+  if (kbmToggle && (mode === 0 || mode === 1)) kbmToggle.checked = mode === 1;
+  if (gamepadToggleKbm && typeof gp === "boolean") gamepadToggleKbm.checked = gp;
+  if (lockFocusToggleKbm && typeof lock === "boolean") lockFocusToggleKbm.checked = lock;
   if (selectedWindowEl) {
     if (sel && sel.title) selectedWindowEl.textContent = sel.title;
     else if (sel && sel.hwnd) selectedWindowEl.textContent = `HWND ${sel.hwnd}`;
     else selectedWindowEl.textContent = "No window selected";
   }
-  updateMode();
+  if (selectedWindowKbmEl) {
+    if (sel && sel.title) selectedWindowKbmEl.textContent = sel.title;
+    else if (sel && sel.hwnd) selectedWindowKbmEl.textContent = `HWND ${sel.hwnd}`;
+    else selectedWindowKbmEl.textContent = "No window selected";
+  }
+
+  // Switch landscape layout based on KBM checkbox.
+  if (layoutVigem && layoutKbm && kbmToggle) {
+    const showKbm = !!kbmToggle.checked;
+    layoutVigem.style.display = showKbm ? "none" : "";
+    layoutKbm.style.display = showKbm ? "grid" : "none";
+  }
 }
 
 function rpc(event, data, cb) {
@@ -151,6 +216,9 @@ if (selectWindowBtn) {
 if (gamepadToggle) {
   gamepadToggle.addEventListener("change", () => rpc("set_gamepad_enabled", { enabled: gamepadToggle.checked }));
 }
+if (kbmToggle) {
+  kbmToggle.addEventListener("change", () => rpc("set_input_mode", { mode: kbmToggle.checked ? 1 : 0 }));
+}
 if (lockFocusToggle) {
   lockFocusToggle.addEventListener("change", () => rpc("set_focus_lock", { enabled: lockFocusToggle.checked }));
 }
@@ -160,6 +228,39 @@ if (padResetBtn) {
     e.preventDefault();
     rpc("pad_reset", {});
   });
+}
+
+// KBM layout controls.
+if (selectWindowBtnKbm) {
+  selectWindowBtnKbm.addEventListener("click", () => {
+    rpc("select_window", {}, () => {
+      if (gamepadToggleKbm) gamepadToggleKbm.checked = true;
+      rpc("set_gamepad_enabled", { enabled: true });
+    });
+  });
+  selectWindowBtnKbm.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    rpc("select_window", {}, () => {
+      if (gamepadToggleKbm) gamepadToggleKbm.checked = true;
+      rpc("set_gamepad_enabled", { enabled: true });
+    });
+  });
+}
+if (padResetBtnKbm) {
+  padResetBtnKbm.addEventListener("click", () => rpc("pad_reset", {}));
+  padResetBtnKbm.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    rpc("pad_reset", {});
+  });
+}
+if (gamepadToggleKbm) {
+  gamepadToggleKbm.addEventListener("change", () => rpc("set_gamepad_enabled", { enabled: gamepadToggleKbm.checked }));
+}
+if (lockFocusToggleKbm) {
+  lockFocusToggleKbm.addEventListener("change", () => rpc("set_focus_lock", { enabled: lockFocusToggleKbm.checked }));
+}
+if (cameraDragToggle) {
+  cameraDragToggle.addEventListener("change", () => rpc("set_kbm_camera_drag", { enabled: cameraDragToggle.checked }));
 }
 
 // Touch visualization (trails + ripples).
@@ -314,7 +415,9 @@ let touchStartX = null;
 let touchStartY = null;
 let touchStartT = 0;
 let moveInterval = null;
-const MOVE_FLUSH_MS = 2; // ~500Hz target (device/network may cap lower)
+// Very high send rates can flood Socket.IO (especially on mobile polling) and cause disconnects.
+// Host side already applies mouse movement at high Hz, so ~125Hz send rate is usually enough.
+const MOVE_FLUSH_MS = 8; // ~125Hz target
 
 function flushMove() {
   const dx = pendingDx;
@@ -532,26 +635,11 @@ document.querySelectorAll("[data-triggerbtn]").forEach((btn) => {
   const which = btn.getAttribute("data-triggerbtn");
   const down = () => socket.emit("pad_trigger", { which, value: 1.0 });
   const up = () => socket.emit("pad_trigger", { which, value: 0.0 });
-  btn.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    down();
-  });
-  btn.addEventListener("touchend", (e) => {
-    e.preventDefault();
-    up();
-  });
-  btn.addEventListener("touchcancel", (e) => {
-    e.preventDefault();
-    up();
-  });
-  btn.addEventListener("mousedown", down);
-  btn.addEventListener("mouseup", up);
-  btn.addEventListener("mouseleave", up);
+  bindHoldButton(btn, down, up);
 });
 
 // Sticks (touch areas).
 function bindStick(area, eventName) {
-  let activeId = null;
   const rect = () => area.getBoundingClientRect();
 
   function compute(x, y) {
@@ -563,6 +651,41 @@ function bindStick(area, eventName) {
     return { x: clamp(nx, -1, 1), y: clamp(-ny, -1, 1) };
   }
 
+  // Prefer Pointer Events for reliable multi-touch + simultaneous buttons.
+  if (window.PointerEvent) {
+    let activePointer = null;
+    const down = (e) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.preventDefault();
+      activePointer = e.pointerId;
+      try {
+        area.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      const v = compute(e.clientX, e.clientY);
+      socket.volatile.emit(eventName, v);
+    };
+    const move = (e) => {
+      if (activePointer == null || e.pointerId !== activePointer) return;
+      e.preventDefault();
+      const v = compute(e.clientX, e.clientY);
+      socket.volatile.emit(eventName, v);
+    };
+    const up = (e) => {
+      if (activePointer == null || e.pointerId !== activePointer) return;
+      e.preventDefault();
+      activePointer = null;
+      socket.emit(eventName, { x: 0, y: 0 });
+    };
+    area.addEventListener("pointerdown", down);
+    area.addEventListener("pointermove", move);
+    area.addEventListener("pointerup", up);
+    area.addEventListener("pointercancel", up);
+    area.addEventListener("lostpointercapture", up);
+    return;
+  }
+
+  // Fallback touch events.
+  let activeId = null;
   area.addEventListener(
     "touchstart",
     (e) => {
@@ -585,27 +708,82 @@ function bindStick(area, eventName) {
     },
     { passive: false },
   );
-  area.addEventListener(
-    "touchend",
-    (e) => {
-      e.preventDefault();
-      activeId = null;
-      socket.emit(eventName, { x: 0, y: 0 });
-    },
-    { passive: false },
-  );
-  area.addEventListener(
-    "touchcancel",
-    (e) => {
-      e.preventDefault();
-      activeId = null;
-      socket.emit(eventName, { x: 0, y: 0 });
-    },
-    { passive: false },
-  );
+  const end = (e) => {
+    e.preventDefault();
+    activeId = null;
+    socket.emit(eventName, { x: 0, y: 0 });
+  };
+  area.addEventListener("touchend", end, { passive: false });
+  area.addEventListener("touchcancel", end, { passive: false });
 }
 
 document.querySelectorAll("[data-stick]").forEach((area) => {
   const which = area.getAttribute("data-stick");
   bindStick(area, which === "right" ? "pad_right" : "pad_left");
+});
+
+// KBM pads reuse the same stick events so host can map to WASD/mouse.
+document.querySelectorAll("[data-kbm-stick]").forEach((area) => {
+  const which = area.getAttribute("data-kbm-stick");
+  bindStick(area, which === "right" ? "pad_right" : "pad_left");
+});
+
+// KBM directional buttons (tap/hold) map to left stick at full deflection.
+function stickHold(vec) {
+  socket.emit("pad_left", vec);
+}
+function stickRelease() {
+  socket.emit("pad_left", { x: 0, y: 0 });
+}
+document.querySelectorAll("[data-kbm-key]").forEach((btn) => {
+  const k = btn.getAttribute("data-kbm-key");
+  const vec = { x: 0, y: 0 };
+  if (k === "w") vec.y = 1;
+  if (k === "s") vec.y = -1;
+  if (k === "a") vec.x = -1;
+  if (k === "d") vec.x = 1;
+
+  const down = () => stickHold(vec);
+  const up = () => stickRelease();
+
+  btn.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    down();
+  });
+  btn.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    up();
+  });
+  btn.addEventListener("touchcancel", (e) => {
+    e.preventDefault();
+    up();
+  });
+  btn.addEventListener("mousedown", down);
+  btn.addEventListener("mouseup", up);
+  btn.addEventListener("mouseleave", up);
+});
+
+// KBM action buttons map to existing pad buttons (host maps in KBM mode).
+const actionMap = { jump: "a", crouch: "b", reload: "x", use: "y" };
+document.querySelectorAll("[data-kbm-action]").forEach((btn) => {
+  const act = btn.getAttribute("data-kbm-action");
+  const name = actionMap[act];
+  if (!name) return;
+  const down = () => socket.emit("pad_button", { name, down: true });
+  const up = () => socket.emit("pad_button", { name, down: false });
+  btn.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    down();
+  });
+  btn.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    up();
+  });
+  btn.addEventListener("touchcancel", (e) => {
+    e.preventDefault();
+    up();
+  });
+  btn.addEventListener("mousedown", down);
+  btn.addEventListener("mouseup", up);
+  btn.addEventListener("mouseleave", up);
 });

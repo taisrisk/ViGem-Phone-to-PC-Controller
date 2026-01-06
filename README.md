@@ -49,6 +49,7 @@ In landscape mode:
 
 - Tap `Select` while your game is the active/focused window on the PC.
 - Optionally enable `Lock focus` to keep trying to bring that window to the front while you play (best-effort; Windows may block focus stealing in some cases).
+- If the game can’t detect the controller without a restart, enable `KBM mode` to map the on-screen gamepad to mouse + keyboard instead.
 
 ## Optional: require a token
 
@@ -97,5 +98,7 @@ Environment variables:
 - `MEMCTRL_RELAY_HOST` (default `127.0.0.1`) for `app.py` → `host.py`
 - `MEMCTRL_RELAY_PORT` (default `8765`) for `app.py` → `host.py`
 - `MEMCTRL_AUTOSTART_HOST` (default `0`) set to `1` to auto-launch `host.py` from `app.py`
+- `MEMCTRL_INPUT_MODE` (default `0`) `0=ViGEm gamepad`, `1=KBM mapping`
+- `MEMCTRL_KBM_CAM_SPEED` (default `18.0`) mouse speed for right-stick camera in KBM mode
 - `MEMCTRL_LOG_INPUT` (default `0`) prints 1s input stats in `host.py`
 - `MEMCTRL_LOG_INPUT_VERBOSE` (default `0`) prints every input event (very spammy at high Hz)

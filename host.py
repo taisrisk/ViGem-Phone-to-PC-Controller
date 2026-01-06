@@ -28,6 +28,7 @@ class Settings:
     mouse_hz: int
     log_input: bool
     log_input_verbose: bool
+    input_mode: int
 
 
 def load_settings() -> Settings:
@@ -42,6 +43,8 @@ def load_settings() -> Settings:
         mouse_hz=int(os.getenv("MEMCTRL_MOUSE_HZ", "500")),
         log_input=os.getenv("MEMCTRL_LOG_INPUT", "0") in {"1", "true", "True"},
         log_input_verbose=os.getenv("MEMCTRL_LOG_INPUT_VERBOSE", "0") in {"1", "true", "True"},
+        # 0 = ViGEm virtual Xbox (vgamepad), 1 = custom KBM mapping for games.
+        input_mode=int(os.getenv("MEMCTRL_INPUT_MODE", "1")),
     )
 
 
@@ -139,7 +142,10 @@ class GamepadAdapter:
 
 
 gamepad_enabled = bool(settings.enable_gamepad)
-gamepad = GamepadAdapter(gamepad_enabled)
+input_mode = 0 if int(settings.input_mode) == 0 else 1
+
+# In KBM mode, the "gamepad" UI becomes a key/mouse mapper.
+gamepad = GamepadAdapter(gamepad_enabled and input_mode == 0)
 
 
 class MouseMover:
@@ -212,6 +218,197 @@ if settings.log_input:
     threading.Thread(target=_stats_loop, name="stats-logger", daemon=True).start()
 
 
+class KbmMapper:
+    def __init__(self) -> None:
+        self._w = False
+        self._a = False
+        self._s = False
+        self._d = False
+        self._lmb = False
+        self._rmb = False
+        self._rmb_trigger = False
+        self._rmb_camera = False
+        self.camera_drag = False
+        self._shift = False
+        self._ctrl = False
+
+        self._right_x = 0.0
+        self._right_y = 0.0
+
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._camera_loop, name="kbm-camera", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _press(self, key: Any) -> None:
+        if keyboard_controller:
+            keyboard_controller.press(key)
+
+    def _release(self, key: Any) -> None:
+        if keyboard_controller:
+            keyboard_controller.release(key)
+
+    def _mouse_down(self, btn: Any) -> None:
+        if mouse_controller:
+            mouse_controller.press(btn)
+
+    def _mouse_up(self, btn: Any) -> None:
+        if mouse_controller:
+            mouse_controller.release(btn)
+
+    def _update_rmb(self) -> None:
+        if not mouse:
+            return
+        want = bool(self._rmb_trigger or self._rmb_camera)
+        if want and not self._rmb:
+            self._rmb = True
+            self._mouse_down(mouse.Button.right)
+        if not want and self._rmb:
+            self._rmb = False
+            self._mouse_up(mouse.Button.right)
+
+    def set_left_stick(self, x: float, y: float) -> None:
+        # WASD mapping with deadzone/threshold.
+        deadzone = 0.18
+        thresh = 0.35
+        x = 0.0 if abs(x) < deadzone else x
+        y = 0.0 if abs(y) < deadzone else y
+        want_w = y > thresh
+        want_s = y < -thresh
+        want_d = x > thresh
+        want_a = x < -thresh
+
+        def flip(state: bool, want: bool, key: str) -> bool:
+            if want and not state:
+                self._press(key)
+                return True
+            if not want and state:
+                self._release(key)
+                return False
+            return state
+
+        self._w = flip(self._w, want_w, "w")
+        self._s = flip(self._s, want_s, "s")
+        self._a = flip(self._a, want_a, "a")
+        self._d = flip(self._d, want_d, "d")
+
+    def set_right_stick(self, x: float, y: float) -> None:
+        with self._lock:
+            self._right_x = float(x)
+            self._right_y = float(y)
+
+    def set_trigger(self, which: str, value: float) -> None:
+        # RT = LMB, LT = RMB
+        down = float(value) > 0.5
+        if not mouse:
+            return
+        if which == "rt":
+            if down and not self._lmb:
+                self._lmb = True
+                self._mouse_down(mouse.Button.left)
+            if not down and self._lmb:
+                self._lmb = False
+                self._mouse_up(mouse.Button.left)
+        elif which == "lt":
+            self._rmb_trigger = bool(down)
+            self._update_rmb()
+
+    def set_button(self, name: str, pressed: bool) -> None:
+        # Reasonable default mapping; can be refined later.
+        mapping = {
+            "a": "space",
+            "b": "c",
+            "x": "r",
+            "y": "e",
+            "back": "esc",
+            "start": "enter",
+            "dup": "up",
+            "ddown": "down",
+            "dleft": "left",
+            "dright": "right",
+        }
+        modmap = {"lb": "shift", "rb": "ctrl"}
+
+        if name in modmap:
+            key = modmap[name]
+            if not keyboard:
+                return
+            key_obj = keyboard.Key.shift if key == "shift" else keyboard.Key.ctrl
+            if pressed:
+                self._press(key_obj)
+            else:
+                self._release(key_obj)
+            return
+
+        keyname = mapping.get(name)
+        if not keyname:
+            return
+        key_obj = _handle_key(keyname)
+        if key_obj is None:
+            return
+        if pressed:
+            self._press(key_obj)
+        else:
+            self._release(key_obj)
+
+    def release_all(self) -> None:
+        # Release movement + mouse buttons.
+        for key, state in (("w", self._w), ("a", self._a), ("s", self._s), ("d", self._d)):
+            if state:
+                self._release(key)
+        self._w = self._a = self._s = self._d = False
+
+        if mouse and self._lmb:
+            self._mouse_up(mouse.Button.left)
+        self._rmb_trigger = False
+        self._rmb_camera = False
+        self._update_rmb()
+        self._lmb = self._rmb = False
+
+        if keyboard and self._shift:
+            self._release(keyboard.Key.shift)
+        if keyboard and self._ctrl:
+            self._release(keyboard.Key.ctrl)
+        self._shift = self._ctrl = False
+
+        with self._lock:
+            self._right_x = 0.0
+            self._right_y = 0.0
+
+    def _camera_loop(self) -> None:
+        # Continuous camera movement from right stick.
+        if not mouse_controller:
+            return
+        hz = 120.0
+        period = 1.0 / hz
+        speed = float(os.getenv("MEMCTRL_KBM_CAM_SPEED", "18.0"))
+        deadzone = 0.12
+        while not self._stop.is_set():
+            time.sleep(period)
+            with self._lock:
+                x = self._right_x
+                y = self._right_y
+            moving = not (abs(x) < deadzone and abs(y) < deadzone)
+            if self.camera_drag:
+                if moving != self._rmb_camera:
+                    self._rmb_camera = moving
+                    self._update_rmb()
+            else:
+                if self._rmb_camera:
+                    self._rmb_camera = False
+                    self._update_rmb()
+
+            if not moving:
+                continue
+            mouse_mover.add(x * speed, -y * speed)
+
+
+kbm = KbmMapper()
+
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 user32.GetForegroundWindow.restype = wintypes.HWND
@@ -255,6 +452,7 @@ def _focus_window(hwnd: int) -> bool:
 selected_window: dict[str, Any] = {"hwnd": 0, "pid": 0, "title": ""}
 focus_lock_enabled = False
 _last_focus_attempt = 0.0
+kbm_camera_drag_enabled = False
 
 
 def _maybe_refocus() -> None:
@@ -277,6 +475,8 @@ def _status_snapshot() -> dict[str, Any]:
         "keyboard": bool(keyboard_controller),
         "gamepad": bool(gamepad.ready),
         "gamepad_enabled": bool(gamepad_enabled),
+        "input_mode": int(input_mode),
+        "kbm_camera_drag": bool(kbm_camera_drag_enabled),
         "gamepad_error": gamepad.error,
         "selected_window": selected_window,
         "focus_lock": bool(focus_lock_enabled),
@@ -296,6 +496,8 @@ def _set_gamepad_enabled(enabled: bool) -> dict[str, Any]:
         return _status_snapshot()
     gamepad_enabled = enabled
     if not gamepad_enabled:
+        if input_mode == 1:
+            kbm.release_all()
         # Stop sending inputs; keep device state neutral if possible.
         try:
             if getattr(gamepad, "ready", False) and getattr(gamepad, "_pad", None) is not None:
@@ -307,13 +509,14 @@ def _set_gamepad_enabled(enabled: bool) -> dict[str, Any]:
             pass
         return _status_snapshot()
 
-    # Enabling: create/recreate the virtual device.
-    gamepad = GamepadAdapter(True)
+    # Enabling: create/recreate the virtual device (only in ViGEm mode).
+    if input_mode == 0:
+        gamepad = GamepadAdapter(True)
     return _status_snapshot()
 
 
 def _handle_rpc(method: str, params: dict[str, Any]) -> dict[str, Any]:
-    global focus_lock_enabled, selected_window, gamepad
+    global focus_lock_enabled, selected_window, gamepad, input_mode, kbm_camera_drag_enabled
 
     if method == "select_foreground_window":
         selected_window = _foreground_window_info()
@@ -335,11 +538,30 @@ def _handle_rpc(method: str, params: dict[str, Any]) -> dict[str, Any]:
     if method == "set_gamepad_enabled":
         return _set_gamepad_enabled(bool(params.get("enabled", False)))
 
+    if method == "set_input_mode":
+        new_mode = int(params.get("mode", 0))
+        new_mode = 0 if new_mode == 0 else 1
+        if new_mode != input_mode:
+            input_mode = new_mode
+            # Recreate/destroy virtual device depending on mode.
+            if input_mode == 0 and gamepad_enabled:
+                gamepad = GamepadAdapter(True)
+            if input_mode == 1:
+                gamepad = GamepadAdapter(False)
+                kbm.release_all()
+        return _status_snapshot()
+
+    if method == "set_kbm_camera_drag":
+        kbm_camera_drag_enabled = bool(params.get("enabled", False))
+        kbm.camera_drag = bool(kbm_camera_drag_enabled)
+        return _status_snapshot()
+
     if method == "pad_reset":
         # Reset is meaningful only if enabled.
         if not gamepad_enabled:
             return _status_snapshot()
-        gamepad = GamepadAdapter(True)
+        if input_mode == 0:
+            gamepad = GamepadAdapter(True)
         return _status_snapshot()
 
     if method == "gamepad_status":
@@ -460,7 +682,12 @@ def _handle_input(event: str, data: dict[str, Any]) -> None:
         _maybe_refocus()
         if not gamepad_enabled:
             return
-        gamepad.set_left_stick(float(data.get("x") or 0.0), float(data.get("y") or 0.0))
+        x = float(data.get("x") or 0.0)
+        y = float(data.get("y") or 0.0)
+        if input_mode == 0:
+            gamepad.set_left_stick(x, y)
+        else:
+            kbm.set_left_stick(x, y)
         _bump("pad")
         return
 
@@ -468,7 +695,12 @@ def _handle_input(event: str, data: dict[str, Any]) -> None:
         _maybe_refocus()
         if not gamepad_enabled:
             return
-        gamepad.set_right_stick(float(data.get("x") or 0.0), float(data.get("y") or 0.0))
+        x = float(data.get("x") or 0.0)
+        y = float(data.get("y") or 0.0)
+        if input_mode == 0:
+            gamepad.set_right_stick(x, y)
+        else:
+            kbm.set_right_stick(x, y)
         _bump("pad")
         return
 
@@ -476,7 +708,12 @@ def _handle_input(event: str, data: dict[str, Any]) -> None:
         _maybe_refocus()
         if not gamepad_enabled:
             return
-        gamepad.set_trigger(str(data.get("which") or ""), float(data.get("value") or 0.0))
+        which = str(data.get("which") or "")
+        value = float(data.get("value") or 0.0)
+        if input_mode == 0:
+            gamepad.set_trigger(which, value)
+        else:
+            kbm.set_trigger(which, value)
         _bump("pad")
         return
 
@@ -484,7 +721,12 @@ def _handle_input(event: str, data: dict[str, Any]) -> None:
         _maybe_refocus()
         if not gamepad_enabled:
             return
-        gamepad.set_button(str(data.get("name") or ""), bool(data.get("down", True)))
+        name = str(data.get("name") or "")
+        down = bool(data.get("down", True))
+        if input_mode == 0:
+            gamepad.set_button(name, down)
+        else:
+            kbm.set_button(name, down)
         _bump("pad")
         return
 
@@ -545,6 +787,7 @@ def serve_forever() -> None:
                                 print(f"Phone connected ({who}); input enabled")
                             elif state == "disconnected":
                                 armed = False
+                                kbm.release_all()
                                 print("Phone disconnected; input disabled")
                             continue
                         if t == "input":
@@ -559,6 +802,7 @@ def serve_forever() -> None:
                 finally:
                     armed = False
                     current_client = {}
+                    kbm.release_all()
                     print("Relay disconnected; waiting...")
 
 
