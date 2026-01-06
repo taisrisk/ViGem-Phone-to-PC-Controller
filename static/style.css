@@ -24,6 +24,9 @@ body {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   overscroll-behavior: none;
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #app {
@@ -92,6 +95,14 @@ main {
   pointer-events: none;
 }
 
+.trace-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 .touchpad .hint {
   position: absolute;
   inset: auto 12px 10px auto;
@@ -119,6 +130,8 @@ main {
   padding: 12px 10px;
   font-weight: 650;
   touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 [data-triggerbtn] {
@@ -168,13 +181,23 @@ main {
 
   .landscape-pane {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 10px;
+    height: 100%;
   }
 
   header {
     padding: 10px 12px;
   }
+}
+
+.landscape-pane > #layout-vigem,
+.landscape-pane > #layout-kbm {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
 }
 
 .pad-top {
@@ -198,6 +221,7 @@ main {
   gap: 10px;
   align-items: stretch;
   min-height: 0;
+  height: 100%;
 }
 
 .pad-left,
@@ -210,6 +234,14 @@ main {
   display: grid;
   gap: 10px;
   min-height: 0;
+}
+
+.pad-left {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.pad-right {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .pad-center {
@@ -257,7 +289,8 @@ main {
 }
 
 .stick-big {
-  height: min(28vh, 180px);
+  height: auto;
+  min-height: 160px;
 }
 
 .kbm-layout {
@@ -270,6 +303,7 @@ main {
   grid-template-columns: 1fr clamp(180px, 26vw, 260px) 1fr;
   gap: 10px;
   min-height: 0;
+  height: 100%;
 }
 
 .kbm-left,
@@ -282,6 +316,11 @@ main {
   display: grid;
   gap: 10px;
   min-height: 0;
+}
+
+.kbm-left,
+.kbm-right {
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .kbm-label {
@@ -297,7 +336,8 @@ main {
   background: radial-gradient(circle at center, rgba(96, 165, 250, 0.10), transparent 60%);
   flex: 1;
   min-height: 0;
-  height: min(38vh, 220px);
+  height: auto;
+  min-height: 160px;
   position: relative;
   touch-action: none;
 }
@@ -327,10 +367,10 @@ main {
     padding: 8px;
   }
   .stick-big {
-    height: min(24vh, 150px);
+    min-height: 120px;
   }
   .kbm-pad {
-    height: min(32vh, 180px);
+    min-height: 120px;
   }
   .pad-btn {
     padding: 10px 8px;

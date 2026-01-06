@@ -99,6 +99,7 @@ Environment variables:
 - `MEMCTRL_RELAY_PORT` (default `8765`) for `app.py` → `host.py`
 - `MEMCTRL_AUTOSTART_HOST` (default `0`) set to `1` to auto-launch `host.py` from `app.py`
 - `MEMCTRL_INPUT_MODE` (default `0`) `0=ViGEm gamepad`, `1=KBM mapping`
-- `MEMCTRL_KBM_CAM_SPEED` (default `18.0`) mouse speed for right-stick camera in KBM mode
+- `MEMCTRL_KBM_CAM_SENS` (default `5.0`) mouse sensitivity for KBM camera touchpad
+- `MEMCTRL_KBM_CAM_SPEED` (default `18.0`) mouse speed for joystick-style camera (if used)
 - `MEMCTRL_LOG_INPUT` (default `0`) prints 1s input stats in `host.py`
 - `MEMCTRL_LOG_INPUT_VERBOSE` (default `0`) prints every input event (very spammy at high Hz)

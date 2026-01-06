@@ -97,6 +97,135 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+// Generic touch tracer for landscape pads.
+function createTracer(container, kind) {
+  if (!container) return null;
+  container.style.position = container.style.position || "relative";
+  const canvas = document.createElement("canvas");
+  canvas.className = "trace-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  container.appendChild(canvas);
+
+  const state = {
+    kind,
+    canvas,
+    points: [],
+    active: new Map(),
+    running: false,
+  };
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const r = container.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.floor(r.width * dpr));
+    canvas.height = Math.max(1, Math.floor(r.height * dpr));
+    canvas.style.width = `${r.width}px`;
+    canvas.style.height = `${r.height}px`;
+  }
+
+  function local(clientX, clientY) {
+    const r = container.getBoundingClientRect();
+    return { x: clientX - r.left, y: clientY - r.top };
+  }
+
+  function start() {
+    if (state.running) return;
+    state.running = true;
+    window.requestAnimationFrame(render);
+  }
+
+  function addPoint(clientX, clientY) {
+    const p = local(clientX, clientY);
+    state.points.push({ ...p, t: performance.now() });
+    if (state.points.length > 240) state.points.splice(0, state.points.length - 240);
+    start();
+  }
+
+  function setActive(id, clientX, clientY) {
+    state.active.set(id, local(clientX, clientY));
+    start();
+  }
+
+  function clearActive(id) {
+    state.active.delete(id);
+  }
+
+  function render() {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const now = performance.now();
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const maxAge = 700;
+    state.points = state.points.filter((p) => now - p.t < maxAge);
+    const pts = state.points;
+
+    const baseColor = kind === "cam" ? [167, 139, 250] : [96, 165, 250];
+
+    function drawSmooth(seg) {
+      if (seg.length < 2) return;
+      const last = seg[seg.length - 1];
+      const age = now - last.t;
+      const alpha = clamp(1 - age / maxAge, 0, 1);
+      ctx.strokeStyle = `rgba(${baseColor[0]},${baseColor[1]},${baseColor[2]},${0.55 * alpha})`;
+      ctx.lineWidth = 3 * dpr * (0.6 + 0.4 * alpha);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(seg[0].x * dpr, seg[0].y * dpr);
+      for (let i = 1; i < seg.length - 1; i++) {
+        const p = seg[i];
+        const n = seg[i + 1];
+        const mx = (p.x + n.x) / 2;
+        const my = (p.y + n.y) / 2;
+        ctx.quadraticCurveTo(p.x * dpr, p.y * dpr, mx * dpr, my * dpr);
+      }
+      const end = seg[seg.length - 1];
+      ctx.lineTo(end.x * dpr, end.y * dpr);
+      ctx.stroke();
+    }
+    drawSmooth(pts);
+
+    state.active.forEach((p) => {
+      ctx.fillStyle = `rgba(${baseColor[0]},${baseColor[1]},${baseColor[2]},0.85)`;
+      ctx.beginPath();
+      ctx.arc(p.x * dpr, p.y * dpr, 6 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    if (state.points.length || state.active.size) {
+      window.requestAnimationFrame(render);
+    } else {
+      state.running = false;
+    }
+  }
+
+  resize();
+  window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", resize);
+
+  return { addPoint, setActive, clearActive };
+}
+
+const moveTracer = createTracer(kbmMovePad, "move");
+const camTracer = createTracer(kbmCamPad, "cam");
+
+// Trigger hold manager (prevents different UI elements fighting over LT/RT).
+const triggerHolds = { lt: new Set(), rt: new Set() };
+function updateTrigger(which) {
+  const held = triggerHolds[which] && triggerHolds[which].size > 0;
+  socket.emit("pad_trigger", { which, value: held ? 1.0 : 0.0 });
+}
+function setTriggerHold(which, source, down) {
+  if (!triggerHolds[which]) return;
+  if (down) triggerHolds[which].add(source);
+  else triggerHolds[which].delete(source);
+  updateTrigger(which);
+}
+
 function bindHoldButton(btn, onDown, onUp) {
   if (!btn) return;
   if (window.PointerEvent) {
@@ -166,11 +295,14 @@ function applyHostState(s) {
   const lock = typeof s.focus_lock === "boolean" ? s.focus_lock : (s.result && s.result.focus_lock);
   const gp = typeof s.gamepad_enabled === "boolean" ? s.gamepad_enabled : (s.result && s.result.gamepad_enabled);
   const mode = typeof s.input_mode === "number" ? s.input_mode : (s.result && s.result.input_mode);
+  const camDrag =
+    typeof s.kbm_camera_drag === "boolean" ? s.kbm_camera_drag : (s.result && s.result.kbm_camera_drag);
   if (lockFocusToggle && typeof lock === "boolean") lockFocusToggle.checked = lock;
   if (gamepadToggle && typeof gp === "boolean") gamepadToggle.checked = gp;
   if (kbmToggle && (mode === 0 || mode === 1)) kbmToggle.checked = mode === 1;
   if (gamepadToggleKbm && typeof gp === "boolean") gamepadToggleKbm.checked = gp;
   if (lockFocusToggleKbm && typeof lock === "boolean") lockFocusToggleKbm.checked = lock;
+  if (cameraDragToggle && typeof camDrag === "boolean") cameraDragToggle.checked = camDrag;
   if (selectedWindowEl) {
     if (sel && sel.title) selectedWindowEl.textContent = sel.title;
     else if (sel && sel.hwnd) selectedWindowEl.textContent = `HWND ${sel.hwnd}`;
@@ -195,6 +327,52 @@ function rpc(event, data, cb) {
     if (resp && resp.ok && resp.result) applyHostState(resp.result);
     if (typeof cb === "function") cb(resp);
   });
+}
+
+let reconnectInFlight = false;
+function resetAndReconnect() {
+  if (reconnectInFlight) return;
+  reconnectInFlight = true;
+
+  // Try to reset host-side state first.
+  try {
+    rpc("pad_reset", {});
+  } catch (_) {}
+
+  // Stop any active intervals so they don't flood after reconnect.
+  try {
+    stopCam();
+  } catch (_) {}
+  try {
+    if (moveInterval) {
+      window.clearInterval(moveInterval);
+      moveInterval = null;
+    }
+    pendingDx = 0;
+    pendingDy = 0;
+    lastX = null;
+    lastY = null;
+  } catch (_) {}
+
+  // Release any trigger holds + camera hold.
+  try {
+    socket.emit("kbm_cam_hold", { down: false });
+    triggerHolds.lt.clear();
+    triggerHolds.rt.clear();
+    updateTrigger("lt");
+    updateTrigger("rt");
+  } catch (_) {}
+
+  // Force reconnect even if already connected.
+  try {
+    socket.disconnect();
+  } catch (_) {}
+  window.setTimeout(() => {
+    try {
+      socket.connect();
+    } catch (_) {}
+    reconnectInFlight = false;
+  }, 350);
 }
 
 if (selectWindowBtn) {
@@ -223,10 +401,10 @@ if (lockFocusToggle) {
   lockFocusToggle.addEventListener("change", () => rpc("set_focus_lock", { enabled: lockFocusToggle.checked }));
 }
 if (padResetBtn) {
-  padResetBtn.addEventListener("click", () => rpc("pad_reset", {}));
+  padResetBtn.addEventListener("click", () => resetAndReconnect());
   padResetBtn.addEventListener("touchstart", (e) => {
     e.preventDefault();
-    rpc("pad_reset", {});
+    resetAndReconnect();
   });
 }
 
@@ -247,10 +425,10 @@ if (selectWindowBtnKbm) {
   });
 }
 if (padResetBtnKbm) {
-  padResetBtnKbm.addEventListener("click", () => rpc("pad_reset", {}));
+  padResetBtnKbm.addEventListener("click", () => resetAndReconnect());
   padResetBtnKbm.addEventListener("touchstart", (e) => {
     e.preventDefault();
-    rpc("pad_reset", {});
+    resetAndReconnect();
   });
 }
 if (gamepadToggleKbm) {
@@ -631,16 +809,20 @@ document.querySelectorAll("[data-pad]").forEach((btn) => {
 });
 
 // Triggers as press/hold buttons (0 or 1).
+let triggerBtnId = 0;
 document.querySelectorAll("[data-triggerbtn]").forEach((btn) => {
   const which = btn.getAttribute("data-triggerbtn");
-  const down = () => socket.emit("pad_trigger", { which, value: 1.0 });
-  const up = () => socket.emit("pad_trigger", { which, value: 0.0 });
+  const src = `btn-${triggerBtnId++}`;
+  const down = () => setTriggerHold(which, src, true);
+  const up = () => setTriggerHold(which, src, false);
   bindHoldButton(btn, down, up);
 });
 
 // Sticks (touch areas).
 function bindStick(area, eventName) {
   const rect = () => area.getBoundingClientRect();
+  let pending = null;
+  let raf = 0;
 
   function compute(x, y) {
     const r = rect();
@@ -649,6 +831,17 @@ function bindStick(area, eventName) {
     const nx = (x - cx) / (r.width / 2);
     const ny = (y - cy) / (r.height / 2);
     return { x: clamp(nx, -1, 1), y: clamp(-ny, -1, 1) };
+  }
+
+  function scheduleEmit(v) {
+    pending = v;
+    if (raf) return;
+    raf = window.requestAnimationFrame(() => {
+      raf = 0;
+      if (!pending) return;
+      socket.volatile.emit(eventName, pending);
+      pending = null;
+    });
   }
 
   // Prefer Pointer Events for reliable multi-touch + simultaneous buttons.
@@ -662,19 +855,35 @@ function bindStick(area, eventName) {
         area.setPointerCapture(e.pointerId);
       } catch (_) {}
       const v = compute(e.clientX, e.clientY);
-      socket.volatile.emit(eventName, v);
+      scheduleEmit(v);
+      if (area === kbmMovePad && moveTracer) {
+        moveTracer.setActive(e.pointerId, e.clientX, e.clientY);
+        moveTracer.addPoint(e.clientX, e.clientY);
+      }
     };
     const move = (e) => {
       if (activePointer == null || e.pointerId !== activePointer) return;
       e.preventDefault();
       const v = compute(e.clientX, e.clientY);
-      socket.volatile.emit(eventName, v);
+      scheduleEmit(v);
+      if (area === kbmMovePad && moveTracer) {
+        moveTracer.setActive(e.pointerId, e.clientX, e.clientY);
+        moveTracer.addPoint(e.clientX, e.clientY);
+      }
     };
     const up = (e) => {
       if (activePointer == null || e.pointerId !== activePointer) return;
       e.preventDefault();
       activePointer = null;
+      pending = null;
+      if (raf) {
+        window.cancelAnimationFrame(raf);
+        raf = 0;
+      }
       socket.emit(eventName, { x: 0, y: 0 });
+      if (area === kbmMovePad && moveTracer) {
+        moveTracer.clearActive(e.pointerId);
+      }
     };
     area.addEventListener("pointerdown", down);
     area.addEventListener("pointermove", move);
@@ -693,7 +902,11 @@ function bindStick(area, eventName) {
       const t = e.changedTouches[0];
       activeId = t.identifier;
       const v = compute(t.clientX, t.clientY);
-      socket.volatile.emit(eventName, v);
+      scheduleEmit(v);
+      if (area === kbmMovePad && moveTracer) {
+        moveTracer.setActive(t.identifier, t.clientX, t.clientY);
+        moveTracer.addPoint(t.clientX, t.clientY);
+      }
     },
     { passive: false },
   );
@@ -704,13 +917,25 @@ function bindStick(area, eventName) {
       const t = Array.from(e.touches).find((x) => x.identifier === activeId);
       if (!t) return;
       const v = compute(t.clientX, t.clientY);
-      socket.volatile.emit(eventName, v);
+      scheduleEmit(v);
+      if (area === kbmMovePad && moveTracer) {
+        moveTracer.setActive(t.identifier, t.clientX, t.clientY);
+        moveTracer.addPoint(t.clientX, t.clientY);
+      }
     },
     { passive: false },
   );
   const end = (e) => {
     e.preventDefault();
+    if (area === kbmMovePad && moveTracer && activeId != null) {
+      moveTracer.clearActive(activeId);
+    }
     activeId = null;
+    pending = null;
+    if (raf) {
+      window.cancelAnimationFrame(raf);
+      raf = 0;
+    }
     socket.emit(eventName, { x: 0, y: 0 });
   };
   area.addEventListener("touchend", end, { passive: false });
@@ -722,49 +947,160 @@ document.querySelectorAll("[data-stick]").forEach((area) => {
   bindStick(area, which === "right" ? "pad_right" : "pad_left");
 });
 
-// KBM pads reuse the same stick events so host can map to WASD/mouse.
+// KBM move pad reuses the same stick events so host can map to WASD.
 document.querySelectorAll("[data-kbm-stick]").forEach((area) => {
   const which = area.getAttribute("data-kbm-stick");
   bindStick(area, which === "right" ? "pad_right" : "pad_left");
 });
 
+// KBM camera pad: relative mouse deltas (touchpad-style).
+const kbmCameraPad = document.querySelector("[data-kbm-camera]");
+let camLastX = null;
+let camLastY = null;
+let camPendingDx = 0;
+let camPendingDy = 0;
+let camInterval = null;
+const CAM_FLUSH_MS = 8; // ~125Hz
+let camActive = false;
+
+function flushCam() {
+  const dx = camPendingDx;
+  const dy = camPendingDy;
+  camPendingDx = 0;
+  camPendingDy = 0;
+  if (dx || dy) socket.volatile.emit("kbm_cam_move", { dx, dy });
+}
+
+function stopCam() {
+  camLastX = null;
+  camLastY = null;
+  camActive = false;
+  // Release camera hold on stop.
+  try {
+    socket.emit("kbm_cam_hold", { down: false });
+  } catch (_) {}
+  if (camInterval) {
+    window.clearInterval(camInterval);
+    camInterval = null;
+  }
+  flushCam();
+}
+
+if (kbmCameraPad) {
+  if (window.PointerEvent) {
+    let activePointer = null;
+    kbmCameraPad.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.preventDefault();
+      activePointer = e.pointerId;
+      camLastX = e.clientX;
+      camLastY = e.clientY;
+      camActive = true;
+      if (cameraDragToggle && cameraDragToggle.checked) socket.emit("kbm_cam_hold", { down: true });
+      if (camTracer) {
+        camTracer.setActive(e.pointerId, e.clientX, e.clientY);
+        camTracer.addPoint(e.clientX, e.clientY);
+      }
+      try {
+        kbmCameraPad.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      if (!camInterval) camInterval = window.setInterval(flushCam, CAM_FLUSH_MS);
+    });
+    kbmCameraPad.addEventListener("pointermove", (e) => {
+      if (activePointer == null || e.pointerId !== activePointer) return;
+      e.preventDefault();
+      if (camLastX == null || camLastY == null) {
+        camLastX = e.clientX;
+        camLastY = e.clientY;
+        return;
+      }
+      camPendingDx += e.clientX - camLastX;
+      camPendingDy += e.clientY - camLastY;
+      camLastX = e.clientX;
+      camLastY = e.clientY;
+      if (camTracer) {
+        camTracer.setActive(e.pointerId, e.clientX, e.clientY);
+        camTracer.addPoint(e.clientX, e.clientY);
+      }
+    });
+    const end = (e) => {
+      if (activePointer == null || e.pointerId !== activePointer) return;
+      e.preventDefault();
+      activePointer = null;
+      if (camTracer) camTracer.clearActive(e.pointerId);
+      stopCam();
+    };
+    kbmCameraPad.addEventListener("pointerup", end);
+    kbmCameraPad.addEventListener("pointercancel", end);
+    kbmCameraPad.addEventListener("lostpointercapture", end);
+  } else {
+    kbmCameraPad.addEventListener(
+      "touchstart",
+      (e) => {
+        e.preventDefault();
+        const t = e.touches[0];
+        camLastX = t.clientX;
+        camLastY = t.clientY;
+        camActive = true;
+        if (cameraDragToggle && cameraDragToggle.checked) socket.emit("kbm_cam_hold", { down: true });
+        if (camTracer) {
+          camTracer.setActive(t.identifier, t.clientX, t.clientY);
+          camTracer.addPoint(t.clientX, t.clientY);
+        }
+        if (!camInterval) camInterval = window.setInterval(flushCam, CAM_FLUSH_MS);
+      },
+      { passive: false },
+    );
+    kbmCameraPad.addEventListener(
+      "touchmove",
+      (e) => {
+        e.preventDefault();
+        const t = e.touches[0];
+        if (camLastX == null || camLastY == null) {
+          camLastX = t.clientX;
+          camLastY = t.clientY;
+          return;
+        }
+        camPendingDx += t.clientX - camLastX;
+        camPendingDy += t.clientY - camLastY;
+        camLastX = t.clientX;
+        camLastY = t.clientY;
+        if (camTracer) {
+          camTracer.setActive(t.identifier, t.clientX, t.clientY);
+          camTracer.addPoint(t.clientX, t.clientY);
+        }
+      },
+      { passive: false },
+    );
+    kbmCameraPad.addEventListener(
+      "touchend",
+      (e) => {
+        if (camTracer && e.changedTouches && e.changedTouches[0]) camTracer.clearActive(e.changedTouches[0].identifier);
+        stopCam();
+      },
+      { passive: false },
+    );
+    kbmCameraPad.addEventListener(
+      "touchcancel",
+      (e) => {
+        if (camTracer && e.changedTouches && e.changedTouches[0]) camTracer.clearActive(e.changedTouches[0].identifier);
+        stopCam();
+      },
+      { passive: false },
+    );
+  }
+}
+
+if (cameraDragToggle) {
+  cameraDragToggle.addEventListener("change", () => {
+    if (!camActive) return;
+    socket.emit("kbm_cam_hold", { down: !!cameraDragToggle.checked });
+  });
+}
+
 // KBM directional buttons (tap/hold) map to left stick at full deflection.
-function stickHold(vec) {
-  socket.emit("pad_left", vec);
-}
-function stickRelease() {
-  socket.emit("pad_left", { x: 0, y: 0 });
-}
-document.querySelectorAll("[data-kbm-key]").forEach((btn) => {
-  const k = btn.getAttribute("data-kbm-key");
-  const vec = { x: 0, y: 0 };
-  if (k === "w") vec.y = 1;
-  if (k === "s") vec.y = -1;
-  if (k === "a") vec.x = -1;
-  if (k === "d") vec.x = 1;
-
-  const down = () => stickHold(vec);
-  const up = () => stickRelease();
-
-  btn.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    down();
-  });
-  btn.addEventListener("touchend", (e) => {
-    e.preventDefault();
-    up();
-  });
-  btn.addEventListener("touchcancel", (e) => {
-    e.preventDefault();
-    up();
-  });
-  btn.addEventListener("mousedown", down);
-  btn.addEventListener("mouseup", up);
-  btn.addEventListener("mouseleave", up);
-});
-
 // KBM action buttons map to existing pad buttons (host maps in KBM mode).
-const actionMap = { jump: "a", crouch: "b", reload: "x", use: "y" };
+const actionMap = { space: "a", crouch: "b", reload: "x", use: "y" };
 document.querySelectorAll("[data-kbm-action]").forEach((btn) => {
   const act = btn.getAttribute("data-kbm-action");
   const name = actionMap[act];

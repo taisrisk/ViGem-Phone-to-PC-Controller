@@ -374,6 +374,17 @@ def on_pad_trigger(data: dict[str, Any]) -> None:
 def on_pad_button(data: dict[str, Any]) -> None:
     relay.send_input("pad_button", {"name": str(data.get("name") or ""), "down": bool(data.get("down", True))})
 
+@socketio.on("kbm_cam_move")
+def on_kbm_cam_move(data: dict[str, Any]) -> None:
+    relay.send_input(
+        "kbm_cam_move",
+        {"dx": float(data.get("dx") or 0.0), "dy": float(data.get("dy") or 0.0)},
+    )
+
+@socketio.on("kbm_cam_hold")
+def on_kbm_cam_hold(data: dict[str, Any]) -> None:
+    relay.send_input("kbm_cam_hold", {"down": bool(data.get("down", False))})
+
 
 @socketio.on("select_window")
 def on_select_window(_data: dict[str, Any]) -> dict[str, Any]:

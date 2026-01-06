@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import socket
 import threading
@@ -29,6 +30,7 @@ class Settings:
     log_input: bool
     log_input_verbose: bool
     input_mode: int
+    kbm_cam_sens: float
 
 
 def load_settings() -> Settings:
@@ -45,6 +47,8 @@ def load_settings() -> Settings:
         log_input_verbose=os.getenv("MEMCTRL_LOG_INPUT_VERBOSE", "0") in {"1", "true", "True"},
         # 0 = ViGEm virtual Xbox (vgamepad), 1 = custom KBM mapping for games.
         input_mode=int(os.getenv("MEMCTRL_INPUT_MODE", "1")),
+        # Multiplier for KBM camera pad deltas.
+        kbm_cam_sens=float(os.getenv("MEMCTRL_KBM_CAM_SENS", "5.0")),
     )
 
 
@@ -172,8 +176,9 @@ class MouseMover:
             with self._lock:
                 dx = max(-settings.max_move_px, min(settings.max_move_px, self._dx))
                 dy = max(-settings.max_move_px, min(settings.max_move_px, self._dy))
-                mx = int(dx)
-                my = int(dy)
+                # Accumulate fractional motion until it crosses whole pixels.
+                mx = int(math.floor(dx)) if dx >= 0 else int(math.ceil(dx))
+                my = int(math.floor(dy)) if dy >= 0 else int(math.ceil(dy))
                 self._dx -= mx
                 self._dy -= my
             if mx or my:
@@ -227,13 +232,14 @@ class KbmMapper:
         self._lmb = False
         self._rmb = False
         self._rmb_trigger = False
-        self._rmb_camera = False
+        self._camera_active = False
         self.camera_drag = False
         self._shift = False
         self._ctrl = False
 
         self._right_x = 0.0
         self._right_y = 0.0
+        self._last_cam_move = 0.0
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -262,7 +268,7 @@ class KbmMapper:
     def _update_rmb(self) -> None:
         if not mouse:
             return
-        want = bool(self._rmb_trigger or self._rmb_camera)
+        want = bool(self._rmb_trigger or (self._camera_active and self.camera_drag))
         if want and not self._rmb:
             self._rmb = True
             self._mouse_down(mouse.Button.right)
@@ -299,6 +305,17 @@ class KbmMapper:
         with self._lock:
             self._right_x = float(x)
             self._right_y = float(y)
+
+    def camera_move(self, dx: float, dy: float) -> None:
+        if not mouse_controller:
+            return
+        dx = float(dx) * float(settings.kbm_cam_sens)
+        dy = float(dy) * float(settings.kbm_cam_sens)
+        mouse_mover.add(dx, dy)
+
+    def set_camera_active(self, active: bool) -> None:
+        self._camera_active = bool(active)
+        self._update_rmb()
 
     def set_trigger(self, which: str, value: float) -> None:
         # RT = LMB, LT = RMB
@@ -364,7 +381,7 @@ class KbmMapper:
         if mouse and self._lmb:
             self._mouse_up(mouse.Button.left)
         self._rmb_trigger = False
-        self._rmb_camera = False
+        self._camera_active = False
         self._update_rmb()
         self._lmb = self._rmb = False
 
@@ -377,7 +394,6 @@ class KbmMapper:
         with self._lock:
             self._right_x = 0.0
             self._right_y = 0.0
-
     def _camera_loop(self) -> None:
         # Continuous camera movement from right stick.
         if not mouse_controller:
@@ -392,15 +408,6 @@ class KbmMapper:
                 x = self._right_x
                 y = self._right_y
             moving = not (abs(x) < deadzone and abs(y) < deadzone)
-            if self.camera_drag:
-                if moving != self._rmb_camera:
-                    self._rmb_camera = moving
-                    self._update_rmb()
-            else:
-                if self._rmb_camera:
-                    self._rmb_camera = False
-                    self._update_rmb()
-
             if not moving:
                 continue
             mouse_mover.add(x * speed, -y * speed)
@@ -728,6 +735,32 @@ def _handle_input(event: str, data: dict[str, Any]) -> None:
         else:
             kbm.set_button(name, down)
         _bump("pad")
+        return
+
+    if event == "kbm_cam_move":
+        _maybe_refocus()
+        if not gamepad_enabled or input_mode != 1:
+            return
+        dx = float(data.get("dx") or 0.0)
+        dy = float(data.get("dy") or 0.0)
+        # Clamp spikes; phone can sometimes produce large deltas on touch resume.
+        dx = max(-120.0, min(120.0, dx))
+        dy = max(-120.0, min(120.0, dy))
+        kbm.camera_move(dx, dy)
+        _bump("pad")
+        if settings.log_input_verbose:
+            print(f"kbm_cam_move dx={dx:.2f} dy={dy:.2f} drag={int(kbm.camera_drag)}")
+        return
+
+    if event == "kbm_cam_hold":
+        _maybe_refocus()
+        if not gamepad_enabled or input_mode != 1:
+            return
+        down = bool(data.get("down", False))
+        # Only hold RMB during camera use (as requested).
+        kbm.set_camera_active(down)
+        if settings.log_input_verbose:
+            print(f"kbm_cam_hold down={int(down)} enabled={int(kbm.camera_drag)}")
         return
 
 

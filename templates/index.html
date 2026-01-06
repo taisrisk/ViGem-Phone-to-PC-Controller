@@ -86,25 +86,10 @@
           </div>
 
           <div id="layout-kbm" class="kbm-layout">
-            <div class="pad-top">
-              <button class="btn pad-btn" data-triggerbtn="lt">Aim</button>
-              <button class="btn pad-btn" data-triggerbtn="rt">Fire</button>
-              <div class="pad-title">KBM</div>
-              <button class="btn pad-btn small" id="btn-select-window-kbm">Select window</button>
-              <button class="btn pad-btn small" id="btn-pad-reset-kbm">Reset</button>
-            </div>
-
             <div class="kbm-main">
               <div class="kbm-left">
-                <div class="kbm-label">Move (WASD)</div>
-                <div class="kbm-pad" id="kbm-move-pad" data-kbm-stick="left">
-                  <div class="kbm-dpad">
-                    <button class="btn pad-btn dpad-up" data-kbm-key="w">W</button>
-                    <button class="btn pad-btn dpad-left" data-kbm-key="a">A</button>
-                    <button class="btn pad-btn dpad-right" data-kbm-key="d">D</button>
-                    <button class="btn pad-btn dpad-down" data-kbm-key="s">S</button>
-                  </div>
-                </div>
+                <div class="kbm-pad" id="kbm-move-pad" data-kbm-stick="left"></div>
+                <button class="btn pad-btn" data-triggerbtn="lt">Aim</button>
               </div>
 
               <div class="kbm-center">
@@ -122,7 +107,11 @@
                 </label>
                 <div id="selected-window-kbm" class="selected-window">No window selected</div>
                 <div class="row">
-                  <button class="btn pad-btn" data-kbm-action="jump">Jump</button>
+                  <button class="btn pad-btn" id="btn-select-window-kbm">Select</button>
+                  <button class="btn pad-btn" id="btn-pad-reset-kbm">Reset</button>
+                </div>
+                <div class="row">
+                  <button class="btn pad-btn" data-kbm-action="space">Space</button>
                   <button class="btn pad-btn" data-kbm-action="use">Use</button>
                 </div>
                 <div class="row">
@@ -132,8 +121,8 @@
               </div>
 
               <div class="kbm-right">
-                <div class="kbm-label">Camera</div>
-                <div class="kbm-pad" id="kbm-cam-pad" data-kbm-stick="right"></div>
+                <div class="kbm-pad" id="kbm-cam-pad" data-kbm-camera="1"></div>
+                <button class="btn pad-btn" data-triggerbtn="rt">Fire</button>
               </div>
             </div>
           </div>
